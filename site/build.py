@@ -2,7 +2,7 @@
 
 Same page design/content as the original artifact page (filters, 今日新職
 badge, stats, hash-routed detail view), plus:
-- sticky header with top-right 「最後更新」 timestamp + admin-only 「🔄 更新職位」 button
+- sticky header with top-right 「最後更新」 timestamp + 「🔄 更新職位」 button
 - PWA head links (manifest + icons)
 """
 import html as htmlmod
@@ -159,14 +159,13 @@ window.addEventListener('hashchange',route);
 route();
 </script>
 <script>
-/* Manual refresh: admin-only button -> Netlify function -> poll version.json */
+/* Manual refresh button -> Netlify function -> poll version.json */
 (function(){
   const btn=document.getElementById('refreshBtn'),
         msg=document.getElementById('refreshMsg'),
         lu=document.getElementById('lastUpdated');
   if(!btn)return;
-  if(localStorage.getItem('nj_admin')!=='1'){btn.style.display='none';return;}
-  btn.style.display='inline-block';
+  btn.style.display='inline-flex';btn.hidden=false;
   let cooling=false;
   function cooldown(sec){
     cooling=true;btn.disabled=true;msg.textContent='';
@@ -269,7 +268,7 @@ def build():
 </div>
 <div class="headright">
 <span id="lastUpdated" data-ts="{esc(updated_iso)}">最後更新：{esc(updated)}</span>
-<button id="refreshBtn" style="display:none">🔄 更新職位</button>
+<button id="refreshBtn">🔄 更新職位</button>
 <span id="refreshMsg"></span>
 </div>
 </div></header>
