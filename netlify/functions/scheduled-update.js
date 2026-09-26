@@ -1,6 +1,6 @@
-// Daily scheduled refresh: 01:00 UTC = 09:00 HKT.
+// Hourly scheduled refresh, 08:00-22:00 HKT (00:00-14:00 UTC), at minute 0.
 // Fires the Netlify build hook, which rebuilds + redeploys the site.
-export const config = { schedule: "0 1 * * *" };
+export const config = { schedule: "0 0-14 * * *" };
 
 export default async () => {
   const hookUrl = process.env.BUILD_HOOK_URL;
