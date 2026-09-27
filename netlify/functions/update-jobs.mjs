@@ -19,6 +19,41 @@ const json = (obj, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8", ...CORS },
   });
 
+// 清理 logo 欄位：唔存 base64，只接受短 URL；超過 10KB 一律設 null，
+// 防止超大 base64/HTML 導致瀏覽器解碼失敗出彩虹 glitch。
+function sanitizeLogo(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (s.length > 10 * 1024) return null; // 超過 10KB
+  if (/^data:image\//i.test(s)) return null; // data URI base64
+  if (/^data:text\/html/i.test(s)) return null; // 包咗 HTML
+  // 長串疑似裸 base64（無 data: 前綴）
+  if (s.length > 500 && /^[A-Za-z0-9+/=\s]+$/.test(s)) return null;
+  // 只接受 http(s) URL
+  if (!/^https?:\/\//i.test(s)) return null;
+  return s;
+}
+
+function sanitizeJobs(jobs) {
+  return jobs.map((j) => {
+    if (j && typeof j === "object") {
+      const out = { ...j };
+      for (const k of ["logo", "logo_url", "logoUrl", "image", "image_url", "company_logo"]) {
+        if (k in out) out[k] = sanitizeLogo(out[k]);
+      }
+      // 順手清埋其他欄位入面嘅 data: URI
+      for (const k of ["description", "requirements"]) {
+        if (typeof out[k] === "string" && /data:image\//i.test(out[k])) {
+          out[k] = out[k].replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/gi, "");
+        }
+      }
+      return out;
+    }
+    return j;
+  });
+}
+
 export default async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS });
@@ -53,9 +88,10 @@ export default async (req) => {
       if (!body.updatedAt || !Array.isArray(body.jobs)) {
         return json({ ok: false, error: "Missing updatedAt/jobs" }, 400);
       }
-      await store.setJSON("latest", { updatedAt: body.updatedAt, jobs: body.jobs });
+      const cleanJobs = sanitizeJobs(body.jobs);
+      await store.setJSON("latest", { updatedAt: body.updatedAt, jobs: cleanJobs });
       try { await store.delete("refresh-request"); } catch {}
-      return json({ ok: true, count: body.jobs.length });
+      return json({ ok: true, count: cleanJobs.length });
     }
 
     return json({ ok: false, error: "Unknown action" }, 400);

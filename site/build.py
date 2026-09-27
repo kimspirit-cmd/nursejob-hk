@@ -93,6 +93,11 @@ border:1px solid var(--line);border-radius:10px;padding:14px}
 
 JS = """
 <script>
+/* 防彩虹 glitch：任何圖片載入失敗即隱藏，唔顯示破圖/解碼失敗嘅彩條 */
+document.addEventListener('error', function(e){
+  const t = e.target;
+  if (t && t.tagName === 'IMG') { t.style.display = 'none'; }
+}, true);
 let JOBS = /*__JOBS__*/[];
 /* Live data: prefer Netlify Blobs via get-jobs; fall back to baked-in data. */
 async function loadLiveJobs(){
