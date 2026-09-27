@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 # `python3 -m scraper.run` (package mode).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scraper import gov, jump, ctgoodjobs, csb, plk  # noqa: E402
+from scraper import gov, jump, ctgoodjobs, csb, plk, tungwah, caritas  # noqa: E402
 from scraper import clean_text  # noqa: E402
 
 HKT = timezone(timedelta(hours=8))
@@ -32,6 +32,8 @@ SCRAPERS = [
     ("ctgoodjobs", ctgoodjobs, ctgoodjobs.SOURCE_NAME),
     ("csb", csb, csb.SOURCE_NAME),
     ("plk", plk, plk.SOURCE_NAME),
+    ("tungwah", tungwah, tungwah.SOURCE_NAME),
+    ("caritas", caritas, caritas.SOURCE_NAME),
 ]
 
 # Fields every job dict carries through the pipeline (mirrors the old DB row).
