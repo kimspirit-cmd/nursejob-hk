@@ -2,3 +2,5 @@ dist/
 __pycache__/
 *.pyc
 .netlify/
+vm/.update-secret
+vm/.update.lock

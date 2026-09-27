@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Update Netlify Blobs with fresh nurse jobs (0 Netlify credit).
 
-Runs the Python scraper + site builder, then pushes dist/jobs.json to
-Netlify Blobs (store "jobs", key "latest").
+Runs the Python scraper + site builder, then POSTs dist/jobs.json to the
+Netlify function `update-jobs` (which writes to Blobs via @netlify/blobs,
+guaranteeing the same Blobs context as `get-jobs`).
 
 Usage:
   update-blobs.py --force        # always scrape + push (daily cron)
   update-blobs.py --check        # only scrape+push if a refresh was requested
-                                 # via the website button (Blobs refresh-request flag)
+                                 # via the website button (checks via update-jobs)
 
 A lock file prevents overlapping runs.
+The shared secret lives in vm/.update-secret (gitignored, not committed).
 """
 import datetime
 import fcntl
@@ -17,13 +19,31 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import blobs
-
+SECRET_FILE = os.path.join(ROOT, "vm", ".update-secret")
 LOCK = os.path.join(ROOT, "vm", ".update.lock")
 DIST_JOBS = os.path.join(ROOT, "dist", "jobs.json")
+UPDATE_URL = "https://nursejobhk.netlify.app/.netlify/functions/update-jobs"
+
+
+def _secret():
+    with open(SECRET_FILE, encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def _post(payload):
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        UPDATE_URL, data=data, method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        body = resp.read().decode("utf-8")
+        if resp.status != 200:
+            raise RuntimeError(f"update-jobs HTTP {resp.status}: {body}")
+        return json.loads(body)
 
 
 def run(cmd):
@@ -42,25 +62,18 @@ def do_update(reason):
     if not isinstance(jobs, list) or not jobs:
         raise RuntimeError("dist/jobs.json is empty or invalid; refusing to push")
     payload = {
+        "secret": _secret(),
+        "action": "update",
         "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "jobs": jobs,
     }
-    blobs.set_json("latest", payload)
-    # Clear any pending manual refresh request.
-    try:
-        blobs.delete("refresh-request")
-    except Exception as e:
-        print(f"note: could not clear refresh-request: {e}")
-    print(f"=== pushed {len(jobs)} jobs to Blobs ===", flush=True)
+    result = _post(payload)
+    print(f"=== pushed {result.get('count', len(jobs))} jobs to Blobs ===", flush=True)
 
 
 def refresh_requested():
-    flag = blobs.get_json("refresh-request")
-    if not flag or not flag.get("requestedAt"):
-        return False
-    latest = blobs.get_json("latest") or {}
-    # Requested after the last successful push?
-    return flag["requestedAt"] > (latest.get("updatedAt") or "")
+    result = _post({"secret": _secret(), "action": "check"})
+    return bool(result.get("refreshRequested"))
 
 
 def main():
