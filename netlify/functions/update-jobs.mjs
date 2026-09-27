@@ -3,8 +3,9 @@
 // Body: { secret, action: "update", updatedAt, jobs }
 //       { secret, action: "check" }  -> 回傳 { refreshRequested: bool }
 // secret 必須同 Netlify env JOBS_UPDATE_SECRET 一致。
+// V2 syntax (export default) 先有自動 Blobs context。
 
-const { getStore } = require("@netlify/blobs");
+import { getStore } from "@netlify/blobs";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -12,24 +13,30 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-exports.handler = async (event) => {
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers: CORS, body: "" };
+const json = (obj, status = 200) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", ...CORS },
+  });
+
+export default async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS });
   }
-  if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers: CORS, body: "Method Not Allowed" };
+  if (req.method !== "POST") {
+    return json({ ok: false, error: "Method not allowed" }, 405);
   }
 
   let body;
   try {
-    body = JSON.parse(event.body || "{}");
+    body = await req.json();
   } catch {
-    return { statusCode: 400, headers: CORS, body: "Bad JSON" };
+    return json({ ok: false, error: "Bad JSON" }, 400);
   }
 
-  const secret = process.env.JOBS_UPDATE_SECRET;
+  const secret = Netlify.env.get("JOBS_UPDATE_SECRET");
   if (!secret || body.secret !== secret) {
-    return { statusCode: 403, headers: CORS, body: "Forbidden" };
+    return json({ ok: false, error: "Forbidden" }, 403);
   }
 
   const store = getStore("jobs");
@@ -39,30 +46,21 @@ exports.handler = async (event) => {
       const flag = await store.get("refresh-request", { type: "json" });
       const latest = (await store.get("latest", { type: "json" })) || {};
       const requested = !!(flag && flag.requestedAt && flag.requestedAt > (latest.updatedAt || ""));
-      return {
-        statusCode: 200,
-        headers: { ...CORS, "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshRequested: requested }),
-      };
+      return json({ refreshRequested: requested });
     }
 
     if (body.action === "update") {
       if (!body.updatedAt || !Array.isArray(body.jobs)) {
-        return { statusCode: 400, headers: CORS, body: "Missing updatedAt/jobs" };
+        return json({ ok: false, error: "Missing updatedAt/jobs" }, 400);
       }
       await store.setJSON("latest", { updatedAt: body.updatedAt, jobs: body.jobs });
-      // 清除手動更新旗標
       try { await store.delete("refresh-request"); } catch {}
-      return {
-        statusCode: 200,
-        headers: { ...CORS, "Content-Type": "application/json" },
-        body: JSON.stringify({ ok: true, count: body.jobs.length }),
-      };
+      return json({ ok: true, count: body.jobs.length });
     }
 
-    return { statusCode: 400, headers: CORS, body: "Unknown action" };
+    return json({ ok: false, error: "Unknown action" }, 400);
   } catch (err) {
     console.error("update-jobs failed:", err);
-    return { statusCode: 500, headers: CORS, body: "Blobs operation failed" };
+    return json({ ok: false, error: "Blobs operation failed" }, 500);
   }
 };
