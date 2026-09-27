@@ -93,7 +93,26 @@ border:1px solid var(--line);border-radius:10px;padding:14px}
 
 JS = """
 <script>
-const JOBS = /*__JOBS__*/[];
+let JOBS = /*__JOBS__*/[];
+/* Live data: prefer Netlify Blobs via get-jobs; fall back to baked-in data. */
+async function loadLiveJobs(){
+  try{
+    const r=await fetch('/.netlify/functions/get-jobs',{cache:'no-store'});
+    if(!r.ok)return false;
+    const d=await r.json();
+    if(!d||!Array.isArray(d.jobs)||!d.jobs.length)return false;
+    JOBS=d.jobs;
+    const lu=document.getElementById('lastUpdated');
+    if(lu&&d.updatedAt){
+      lu.dataset.ts=d.updatedAt;
+      try{
+        const dt=new Date(d.updatedAt),p=n=>String(n).padStart(2,'0');
+        lu.textContent='最後更新：'+dt.getFullYear()+'-'+p(dt.getMonth()+1)+'-'+p(dt.getDate())+' '+p(dt.getHours())+':'+p(dt.getMinutes());
+      }catch(e){}
+    }
+    return true;
+  }catch(e){return false;}
+}
 const SRCN = {gov:'勞工處', jump:'明報 JUMP', ctgoodjobs:'CTgoodjobs', csb:'公務員事務局', plk:'保良局'};
 const $ = id => document.getElementById(id);
 const esc = s => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -156,10 +175,10 @@ function route(){
 }
 ['q','f-level','f-source','f-sort','f-new'].forEach(id=>$(id).addEventListener('input',()=>{location.hash='#/';renderList();}));
 window.addEventListener('hashchange',route);
-route();
+loadLiveJobs().then(()=>{route();});
 </script>
 <script>
-/* Manual refresh button -> Netlify function -> poll version.json */
+/* Manual refresh button -> dispatch workflow -> poll get-jobs for new updatedAt */
 (function(){
   const btn=document.getElementById('refreshBtn'),
         msg=document.getElementById('refreshMsg'),
@@ -185,24 +204,24 @@ route();
       let d={};try{d=await r.json();}catch(e){}
       if(r.status===429)throw new Error('操作太頻繁，請10分鐘後再試');
       if(!r.ok||!d.ok)throw new Error(d.error||('觸發失敗（HTTP '+r.status+'）'));
-      msg.textContent='已觸發更新，約需2-5分鐘\\u2026';
+      msg.textContent='已觸發更新，約需5-15分鐘\\u2026';
       const before=(lu&&lu.dataset.ts)||'';
       const t0=Date.now();
       const iv=setInterval(async()=>{
         try{
-          const v=await (await fetch('/version.json',{cache:'no-store'})).json();
-          if(v.built_at&&v.built_at!==before){
+          const d2=await (await fetch('/.netlify/functions/get-jobs',{cache:'no-store'})).json();
+          if(d2&&d2.updatedAt&&d2.updatedAt!==before){
             clearInterval(iv);
-            btn.innerHTML='\\u2705 已更新 '+v.job_count+' 個';
+            btn.innerHTML='\\u2705 已更新 '+(d2.jobs?d2.jobs.length:'?')+' 個';
             msg.textContent='';
             cooldown(60);
             setTimeout(()=>location.reload(),2000);
-          }else if(Date.now()-t0>6*60*1000){
+          }else if(Date.now()-t0>20*60*1000){
             clearInterval(iv);btn.disabled=false;btn.textContent='\\u{1F504} 更新職位';
             msg.textContent='等候逾時，網站稍後會自動更新';
           }
         }catch(e){/* transient error: keep polling */}
-      },5000);
+      },10000);
     }catch(e){
       btn.disabled=false;btn.textContent='\\u{1F504} 更新職位';
       msg.textContent='\\u274C '+e.message;
@@ -306,6 +325,9 @@ def build():
 </html>"""
     DIST.mkdir(parents=True, exist_ok=True)
     OUT.write_text(html, encoding="utf-8")
+    # Frontend-shaped jobs array for the Blobs pipeline (GitHub workflow pushes
+    # this file to Netlify Blobs; get-jobs serves it to the live site).
+    (DIST / "jobs.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     VERSION.write_text(json.dumps({
         "built_at": built_at_iso,
         "job_count": len(jobs),

@@ -1,6 +1,10 @@
 // Manual refresh trigger: POST /.netlify/functions/trigger-update
-// Rate limit: max 1 trigger per 10 minutes (tracked via Netlify Blobs).
-// Fires the Netlify build hook, which rebuilds + redeploys the site.
+// Writes a refresh request to Netlify Blobs (store "jobs", key "refresh-request").
+// A scheduler (outside Netlify) watches this flag, runs the scraper, and writes
+// the fresh data to Blobs (store "jobs", key "latest").
+// It NEVER triggers a Netlify build/deploy (0 credit).
+//
+// Rate limit: max 1 request per 10 minutes (tracked via Netlify Blobs).
 //
 // NOTE: @netlify/blobs must be declared in package.json, otherwise the
 // deploy-time bundle cannot resolve the import and the function crashes
@@ -8,12 +12,20 @@
 import { getStore } from "@netlify/blobs";
 
 const RATE_LIMIT_MS = 10 * 60 * 1000;
-const HOOK_TIMEOUT_MS = 8000; // stay well under the 10s Starter function limit
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...CORS,
+    },
   });
 
 // Returns { limited:boolean, waitSec:number }.
@@ -46,38 +58,13 @@ async function markTriggered() {
   }
 }
 
-// Fire the build hook with an abort timeout so a hanging hook
-// can never push us past the function execution limit.
-async function fireHook(hookUrl) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), HOOK_TIMEOUT_MS);
-  try {
-    const r = await fetch(hookUrl, { method: "POST", signal: ctrl.signal });
-    if (!r.ok) {
-      return new Error(`build hook responded HTTP ${r.status}`);
-    }
-    return null;
-  } catch (e) {
-    return e && e.name === "AbortError"
-      ? new Error("build hook request timed out")
-      : e;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 export default async (req) => {
   try {
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS });
+    }
     if (req.method !== "POST") {
       return json({ ok: false, error: "Method not allowed" }, 405);
-    }
-    const hookUrl = process.env.BUILD_HOOK_URL;
-    if (!hookUrl) {
-      console.error("trigger-update: BUILD_HOOK_URL is not configured");
-      return json(
-        { ok: false, error: "BUILD_HOOK_URL is not configured" },
-        500
-      );
     }
     const rl = await checkRateLimit();
     if (rl.limited) {
@@ -86,13 +73,12 @@ export default async (req) => {
         429
       );
     }
-    const hookErr = await fireHook(hookUrl);
-    if (hookErr) {
-      console.error("trigger-update: build hook failed:", hookErr);
-      return json({ ok: false, error: String(hookErr.message || hookErr) }, 502);
-    }
+    // Signal the external scheduler to run a fresh scrape.
+    const store = getStore("jobs");
+    const requestedAt = new Date().toISOString();
+    await store.setJSON("refresh-request", { requestedAt });
     await markTriggered();
-    return json({ ok: true, triggered_at: new Date().toISOString() });
+    return json({ ok: true, requested_at: requestedAt });
   } catch (e) {
     console.error("trigger-update failed:", e);
     return json({ ok: false, error: String((e && e.message) || e) }, 500);
