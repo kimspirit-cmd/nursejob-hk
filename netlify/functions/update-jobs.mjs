@@ -94,6 +94,15 @@ export default async (req) => {
       return json({ ok: true, count: cleanJobs.length });
     }
 
+    if (body.action === "clear") {
+      // 清空舊壞數據：刪除所有已知嘅 jobs key
+      const deleted = [];
+      for (const key of ["latest", "latest.json"]) {
+        try { await store.delete(key); deleted.push(key); } catch {}
+      }
+      return json({ ok: true, deleted });
+    }
+
     return json({ ok: false, error: "Unknown action" }, 400);
   } catch (err) {
     console.error("update-jobs failed:", err);

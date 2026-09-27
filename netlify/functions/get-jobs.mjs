@@ -7,7 +7,7 @@ import { getStore } from "@netlify/blobs";
 export default async (req, context) => {
   const headers = {
     "Content-Type": "application/json",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "no-store, no-cache",
     "Access-Control-Allow-Origin": "*",
   };
   try {
