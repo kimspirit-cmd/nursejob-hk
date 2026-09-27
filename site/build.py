@@ -77,7 +77,7 @@ display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .salary{font-weight:700;color:#b45309}
 footer{color:var(--muted);font-size:12px;padding:24px 0;text-align:center}
 footer a{color:var(--brand-d)}
-.version-badge{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border-radius:999px;font-size:11px;font-family:monospace;letter-spacing:.3px;border:1px solid;backdrop-filter:blur(6px)}
+.version-badge{position:fixed;right:12px;bottom:56px;z-index:9999;padding:6px 10px;border-radius:999px;font-size:11px;font-family:monospace;letter-spacing:.3px;border:1px solid;backdrop-filter:blur(6px)}
 .version-badge.prod{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.4);color:#15803d}
 .version-badge.uat{background:rgba(234,179,8,.18);border-color:rgba(234,179,8,.5);color:#854d0e}
 .detail{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;margin:18px 0}
