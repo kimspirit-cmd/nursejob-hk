@@ -35,15 +35,34 @@ def _secret():
 
 def _post(payload):
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        UPDATE_URL, data=data, method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        body = resp.read().decode("utf-8")
-        if resp.status != 200:
-            raise RuntimeError(f"update-jobs HTTP {resp.status}: {body}")
+    last_err = None
+    # urllib first, with retries for flaky chunked responses
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                UPDATE_URL, data=data, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                body = resp.read().decode("utf-8")
+                if resp.status != 200:
+                    raise RuntimeError(f"update-jobs HTTP {resp.status}: {body}")
+                return json.loads(body)
+        except Exception as e:  # IncompleteRead / RemoteDisconnected etc.
+            last_err = e
+    # fallback: curl handles the chunked encoding reliably
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-m", "180", "-X", "POST", UPDATE_URL,
+             "-H", "Content-Type: application/json", "--data-binary", "@-"],
+            input=data, capture_output=True, timeout=200,
+        )
+        body = r.stdout.decode("utf-8")
+        if r.returncode != 0 or not body.strip():
+            raise RuntimeError(f"curl fallback failed: rc={r.returncode}")
         return json.loads(body)
+    except Exception:
+        raise last_err
 
 
 def run(cmd):
