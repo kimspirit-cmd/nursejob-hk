@@ -7,6 +7,7 @@ badge, stats, hash-routed detail view), plus:
 """
 import html as htmlmod
 import json
+import os
 import re
 import shutil
 from datetime import date, datetime, timedelta, timezone
@@ -76,6 +77,9 @@ display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .salary{font-weight:700;color:#b45309}
 footer{color:var(--muted);font-size:12px;padding:24px 0;text-align:center}
 footer a{color:var(--brand-d)}
+.version-badge{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border-radius:999px;font-size:11px;font-family:monospace;letter-spacing:.3px;border:1px solid;backdrop-filter:blur(6px)}
+.version-badge.prod{background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.4);color:#15803d}
+.version-badge.uat{background:rgba(234,179,8,.18);border-color:rgba(234,179,8,.5);color:#854d0e}
 .detail{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;margin:18px 0}
 .detail h1{margin:0 0 8px;font-size:24px}
 .kv{display:grid;grid-template-columns:110px 1fr;gap:8px 12px;font-size:14px;margin:14px 0}
@@ -268,6 +272,18 @@ def build():
     src_stats = " · ".join(f"{SOURCE_NAMES.get(s, s)} {n}" for s, n in sorted(by_source.items()))
     lvl_stats = " · ".join(f"{lv} {n}" for lv, n in sorted(by_level.items()))
     built_at_iso = datetime.now(HKT).isoformat(timespec="seconds")
+    # Version badge info (from build.sh env; falls back to src/version.json)
+    try:
+        _ver = json.load(open(ROOT / "src" / "version.json", encoding="utf-8")).get("version", "v1.0.0")
+    except OSError:
+        _ver = "v1.0.0"
+    app_version = {
+        "version": os.environ.get("APP_VERSION", _ver),
+        "commit": os.environ.get("GIT_COMMIT", "unknown"),
+        "build_time": os.environ.get("BUILD_TIME", datetime.now(HKT).strftime("%Y-%m-%d %H:%M")),
+        "branch": os.environ.get("APP_BRANCH", "unknown"),
+    }
+    app_version_json = json.dumps(app_version, ensure_ascii=False)
     jobs_json = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     js = JS.replace("/*__JOBS__*/[]", jobs_json)
     html = f"""<!DOCTYPE html>
@@ -325,6 +341,16 @@ def build():
 </footer>
 </div>
 <div class="wrap" id="detailview" style="display:none"></div>
+<div id="version-badge" class="version-badge prod">Prod v1.0.0 | abc1234</div>
+<script>window.__APP_VERSION__={app_version_json};</script>
+<script>
+(function(){{var v=window.__APP_VERSION__||{{}};var b=document.getElementById('version-badge');if(!b)return;
+var isUat=location.hostname.indexOf('staging--')!==-1||v.branch==='staging';
+b.classList.remove('prod','uat');b.classList.add(isUat?'uat':'prod');
+var ver=v.version||'v1.0.0',commit=v.commit||'',btime=v.build_time||'',branch=v.branch||'';
+b.textContent=isUat?('UAT '+ver+'-staging | '+commit+' | '+btime):('Prod '+ver+' | '+commit);
+b.title='Version: '+ver+'\\nCommit: '+commit+'\\nBuild Time: '+btime+'\\nBranch: '+branch;}})();
+</script>
 {js}
 </body>
 </html>"""
@@ -337,6 +363,10 @@ def build():
         "built_at": built_at_iso,
         "job_count": len(jobs),
         "sources": payload.get("sources", {}),
+        "version": app_version["version"],
+        "commit": app_version["commit"],
+        "build_time": app_version["build_time"],
+        "branch": app_version["branch"],
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     assets_src = ROOT / "assets"
     if assets_src.is_dir():

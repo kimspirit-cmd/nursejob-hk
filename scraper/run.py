@@ -11,8 +11,10 @@ Usage: python3 scraper/run.py [all|gov|jump|ctgoodjobs|csb|plk ...]
 """
 import json
 import os
+import re
 import sys
 import traceback
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 # Allow running as `python3 scraper/run.py` (script mode) as well as
@@ -48,6 +50,82 @@ def _clean_job(job: dict) -> dict:
     out["description"] = clean_text(out.get("description"))
     out["requirements"] = clean_text(out.get("requirements"))
     return out
+
+
+# --- 0-credit optimization: slim / dedup / expiry / stats (run.py only) ---
+
+MAX_DESC_CHARS = 200
+EXPIRY_DAYS = 30
+
+
+def _slim_description(text: str) -> str:
+    """Strip any HTML tags, collapse whitespace, keep first 200 chars."""
+    t = re.sub(r"<[^>]+>", " ", text or "")
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) > MAX_DESC_CHARS:
+        t = t[:MAX_DESC_CHARS].rstrip() + "..."
+    return t
+
+
+def _parse_posted(date_str: str):
+    """Return date object or None if missing/unparseable (treated as valid)."""
+    if not date_str or not str(date_str).strip():
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(str(date_str).strip()[:10], fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(str(date_str).strip()).date()
+    except ValueError:
+        return None
+
+
+def _dedup_key(job: dict) -> tuple:
+    # district proxy: location field (no separate district column exists)
+    return (
+        str(job.get("title", "")).strip().lower(),
+        str(job.get("company", "")).strip().lower(),
+        str(job.get("location", "")).strip().lower(),
+    )
+
+
+def optimize(jobs: list) -> tuple:
+    """Slim descriptions, dedup, drop expired. Returns (jobs, report)."""
+    before = len(jobs)
+    # 1. slim descriptions (+ defensive base64 strip, logo stays null)
+    for j in jobs:
+        j["description"] = _slim_description(j.get("description", ""))
+        j["requirements"] = _slim_description(j.get("requirements", ""))
+        if j.get("logo_url"):
+            j["logo_url"] = None
+    # 2. dedup: keep newest posted_date per (title, company, location)
+    best: dict = {}
+    for j in jobs:
+        k = _dedup_key(j)
+        cur = best.get(k)
+        if cur is None:
+            best[k] = j
+        else:
+            d_new = _parse_posted(j.get("posted_date"))
+            d_cur = _parse_posted(cur.get("posted_date"))
+            if d_new and (not d_cur or d_new > d_cur):
+                best[k] = j
+    deduped = list(best.values())
+    # 3. expiry: drop posted_date older than 30 days; missing = keep
+    today = datetime.now(HKT).date()
+    kept = []
+    expired = 0
+    for j in deduped:
+        d = _parse_posted(j.get("posted_date"))
+        if d and (today - d).days > EXPIRY_DAYS:
+            expired += 1
+            continue
+        kept.append(j)
+    report = {"before": before, "deduped": len(deduped), "expired": expired,
+              "after": len(kept)}
+    return kept, report
 
 
 def load_previous() -> dict:
@@ -95,10 +173,24 @@ def run(sources: list | None = None) -> dict:
         "jobs": all_jobs,
         "sources": summary,
     }
+    # 0-credit optimization: slim + dedup + expiry, then attach stats
+    all_jobs, opt = optimize(all_jobs)
+    payload["jobs"] = all_jobs
+    payload["stats"] = {
+        "total": len(all_jobs),
+        "bySource": dict(Counter(j.get("source", "") for j in all_jobs)),
+        "byDistrict": dict(Counter(
+            (j.get("location") or "").strip() or "未註明" for j in all_jobs)),
+        "updatedAt": datetime.now(HKT).strftime("%Y-%m-%d %H:%M HKT"),
+    }
+    print(f"[optimize] before={opt['before']} deduped={opt['deduped']} "
+          f"expired={opt['expired']} after={opt['after']}", flush=True)
     os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
-    print(f"wrote {DATA_PATH} ({len(all_jobs)} jobs)", flush=True)
+    size_kb = os.path.getsize(DATA_PATH) / 1024
+    print(f"wrote {DATA_PATH} ({len(all_jobs)} jobs, {size_kb:.1f} KB)",
+          flush=True)
     return summary
 
 
